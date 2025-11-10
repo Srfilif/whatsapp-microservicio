@@ -12,76 +12,75 @@ const server = http.createServer(app);
 // Inicializar WebSocket
 websocketService.initialize(server);
 
-// Integrar WhatsApp con WebSocket y Webhook
-whatsappService.on('qr', (data) => {
-  websocketService.broadcast('whatsapp:qr', data);
-  webhookService.notifyQRGenerated(data);
+// Eventos desde WhatsApp → WebSocket + Webhooks
+whatsappService.on('qr', (qrData) => {
+  logger.info('📲 QR generado, enviando a WebSocket y Webhook...');
+  websocketService.broadcast('whatsapp:qr', qrData);
+  webhookService.notifyQRGenerated(qrData);
 });
 
-whatsappService.on('connected', (data) => {
-  websocketService.broadcast('whatsapp:connected', data);
-  webhookService.notifyConnected(data);
+whatsappService.on('connected', (connectionInfo) => {
+  logger.info(`✅ WhatsApp conectado: ${connectionInfo.user}`);
+  websocketService.broadcast('whatsapp:connected', connectionInfo);
+  webhookService.notifyConnected(connectionInfo);
 });
 
 whatsappService.on('disconnected', () => {
+  logger.warn('⚠ WhatsApp desconectado');
   websocketService.broadcast('whatsapp:disconnected', {});
   webhookService.notifyDisconnected();
 });
 
-whatsappService.on('message', (data) => {
-  websocketService.broadcast('whatsapp:message', data);
-  webhookService.notifyMessageReceived(data);
+whatsappService.on('message', (messageData) => {
+  logger.info('💬 Mensaje recibido, reenviando a WebSocket y Webhook...');
+  websocketService.broadcast('whatsapp:message', messageData);
+  webhookService.notifyMessageReceived(messageData);
 });
 
-// Inicializar WhatsApp
+// Inicialización del microservicio
 async function startServer() {
   try {
-    logger.info('Starting WhatsApp Microservice...');
-    
+    logger.info('🚀 Iniciando WhatsApp Microservice...');
+
     // Inicializar WhatsApp
     await whatsappService.initialize();
-    
-    // Iniciar servidor HTTP
-    server.listen(config.port, () => {
-      logger.info({ 
-        port: config.port,
+
+    // Escuchar en IPv4 explícitamente
+    server.listen(config.port, "0.0.0.0", () => {
+      logger.info({
+        httpPort: config.port,
         wsPort: config.wsPort,
-        env: config.nodeEnv 
-      }, 'Server started successfully');
+        env: config.nodeEnv,
+        address: `http://0.0.0.0:${config.port}`
+      }, '✅ Microservicio iniciado y escuchando correctamente');
     });
+
   } catch (error) {
-    logger.error({ error }, 'Failed to start server');
+    logger.error({ error }, '❌ Error al iniciar el microservicio');
     process.exit(1);
   }
 }
 
 // Manejo de señales de cierre
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
+const gracefulShutdown = () => {
+  logger.warn('⛔ Apagando microservicio...');
   server.close(() => {
-    logger.info('Server closed');
+    logger.info('🛑 Servidor detenido correctamente.');
     process.exit(0);
   });
+};
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// Manejo global de errores
+process.on('uncaughtException', (err) => {
+  logger.error({ err }, '🔥 Excepción no controlada');
 });
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
-  });
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason }, '⚠ Promesa rechazada sin manejar');
 });
 
-// Manejo de errores no capturados
-process.on('uncaughtException', (error) => {
-  logger.error({ error }, 'Uncaught exception');
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error({ reason, promise }, 'Unhandled rejection');
-  process.exit(1);
-});
-
-// Iniciar servidor
+// Start
 startServer();
